@@ -65,7 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             usage_map = {}
             async with session.get(
-                "https://earnapp.com/dashboard/api/usage?appid=earnapp",
+                "https://earnapp.com/dashboard/api/usage?appid=earnapp&step=daily",
                 headers=headers,
             ) as usage_resp:
                 if usage_resp.status == 200:
@@ -77,14 +77,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 usage_map[dev_id] = item.get("data", {})
 
             statuses_data = {}
-            async with session.get(
+            device_uuids = [
+                d.get("uuid") or d.get("_id")
+                for d in devices_data
+                if d.get("uuid") or d.get("_id")
+            ]
+            async with session.post(
                 "https://earnapp.com/dashboard/api/device_statuses?appid=earnapp",
                 headers=headers,
+                json={"list": device_uuids},
             ) as status_resp:
                 if status_resp.status == 200:
                     statuses_raw = await status_resp.json()
                     if isinstance(statuses_raw, dict):
-                        statuses_data = statuses_raw
+                        if isinstance(statuses_raw.get("statuses"), dict):
+                            statuses_data = statuses_raw["statuses"]
+                        else:
+                            statuses_data = statuses_raw
+                    elif isinstance(statuses_raw, list):
+                        for item in statuses_raw:
+                            if isinstance(item, dict):
+                                did = item.get("uuid") or item.get("_id")
+                                if did:
+                                    statuses_data[did] = item
 
             return {
                 "money": money_data,

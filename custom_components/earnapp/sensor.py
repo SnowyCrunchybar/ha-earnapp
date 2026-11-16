@@ -33,6 +33,14 @@ def _dev_title(device: dict, fallback_id: str) -> str:
     return device.get("title") or device.get("name") or fallback_id[:8]
 
 
+def _dev_ip(device: dict) -> str | None:
+    """Return primary IP address from 'ips' list or fallback 'ip' field."""
+    ips = device.get("ips")
+    if isinstance(ips, list) and len(ips) > 0:
+        return str(ips[0])
+    return device.get("ip")
+
+
 def _dev_platform(device: dict, dev_id: str) -> tuple[str, str]:
     """Return (platform_label, mdi_icon) based on device_type or ID prefix."""
     raw_type = (device.get("device_type") or "").lower()
@@ -162,7 +170,7 @@ class EarnAppDevicesSensor(EarnAppBaseSensor):
                     "uuid": _dev_id(d),
                     "title": _dev_title(d, _dev_id(d) or ""),
                     "platform": _dev_platform(d, _dev_id(d) or "")[0],
-                    "ip": d.get("ip"),
+                    "ip": _dev_ip(d),
                     "bw": d.get("bw"),
                     "earned": d.get("earned"),
                 }
@@ -256,10 +264,12 @@ class EarnAppSingleDeviceSensor(EarnAppDeviceBase):
             "uuid": self._dev_id,
             "title": self._device_name(),
             "platform": platform_label,
-            "bandwidth_bytes": device.get("bw"),
             "total_earned": device.get("earned_total"),
             "rate": device.get("rate"),
-            "ip": device.get("ip"),
+            "billing": device.get("billing"),
+            "uptime": device.get("uptime"),
+            "total_uptime": device.get("total_uptime"),
+            "ips": device.get("ips"),
             "country": device.get("country"),
         }
 
@@ -335,11 +345,13 @@ class EarnAppDeviceIpSensor(EarnAppDeviceBase):
 
     @property
     def native_value(self) -> str | None:
-        return self._get_device_data().get("ip")
+        return _dev_ip(self._get_device_data())
 
     @property
     def extra_state_attributes(self):
         device = self._get_device_data()
         return {
+            "all_ips": device.get("ips"),
             "country": device.get("country"),
+            "billing": device.get("billing"),
         }
