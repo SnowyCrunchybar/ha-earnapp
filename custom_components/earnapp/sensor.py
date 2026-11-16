@@ -1,23 +1,33 @@
-import logging
-from datetime import timedelta
+from datetime import datetime, timezone
 
-from aiohttp import ClientError
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfInformation
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import (
-    DataUpdateCoordinator,
-    CoordinatorEntity,
-    UpdateFailed,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
 
-from .const import DOMAIN, CONF_REFRESH_TOKEN, CONF_XSRF_TOKEN
+from .const import DOMAIN
 
-_LOGGER = logging.getLogger(__name__)
-SCAN_INTERVAL = timedelta(minutes=15)
+
+def _today_str() -> str:
+    """Return today's UTC date string matching EarnApp usage keys (YYYY-MM-DD)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _dev_id(device: dict) -> str | None:
+    """Return device identifier supporting both uuid and _id."""
+    return device.get("uuid") or device.get("_id")
+
+
+def _dev_title(device: dict, fallback_id: str) -> str:
+    """Return human-readable device title supporting both title and name."""
+    return device.get("title") or device.get("name") or fallback_id[:8]
 
 
 async def async_setup_entry(
@@ -26,90 +36,27 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up EarnApp sensors based on a config entry."""
-    refresh_token = entry.data[CONF_REFRESH_TOKEN]
-    xsrf_token = entry.data[CONF_XSRF_TOKEN]
-    session = async_get_clientsession(hass)
-
-    async def async_update_data():
-        """Fetch data from EarnApp API."""
-        headers = {
-            "Cookie": (
-                f"auth-method=google; "
-                f"oauth-refresh-token={refresh_token}; "
-                f"xsrf-token={xsrf_token}"
-            ),
-            "x-xsrf-token": xsrf_token,
-            "Accept": "application/json, text/plain, */*",
-            "Referer": "https://earnapp.com/dashboard/",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            ),
-        }
-        try:
-            async with session.get(
-                "https://earnapp.com/dashboard/api/money?appid=earnapp",
-                headers=headers,
-            ) as money_resp:
-                if money_resp.status == 401:
-                    await hass.config_entries.async_start_reauth(
-                        entry, data=entry.data
-                    )
-                if money_resp.status != 200:
-                    raise UpdateFailed(f"Money API error: HTTP {money_resp.status}")
-                money_data = await money_resp.json()
-
-            async with session.get(
-                "https://earnapp.com/dashboard/api/devices?appid=earnapp",
-                headers=headers,
-            ) as dev_resp:
-                if dev_resp.status == 401:
-                    await hass.config_entries.async_start_reauth(
-                        entry, data=entry.data
-                    )
-                if dev_resp.status != 200:
-                    raise UpdateFailed(f"Devices API error: HTTP {dev_resp.status}")
-                devices_data = await dev_resp.json()
-                if not isinstance(devices_data, list):
-                    raise UpdateFailed("Devices API returned an invalid response")
-
-            return {
-                "money": money_data,
-                "devices": devices_data,
-            }
-        except UpdateFailed:
-            raise
-        except (ClientError, TypeError, ValueError) as err:
-            raise UpdateFailed(f"Error communicating with EarnApp API: {err}") from err
-
-    coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name="earnapp",
-        update_method=async_update_data,
-        update_interval=SCAN_INTERVAL,
-    )
-
-    await coordinator.async_config_entry_first_refresh()
+    coordinator: DataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities: list[SensorEntity] = [
         EarnAppBalanceSensor(coordinator, entry),
         EarnAppTotalEarnedSensor(coordinator, entry),
         EarnAppDevicesSensor(coordinator, entry),
+        EarnAppTotalDailyUsageSensor(coordinator, entry),
     ]
 
-    known_uuids: set[str] = set()
+    known_ids: set[str] = set()
 
     async_add_entities(entities)
 
     def async_add_new_devices() -> None:
-        new_entities = []
+        new_entities: list[SensorEntity] = []
         for device in coordinator.data.get("devices", []):
-            uuid = device.get("uuid")
-            if uuid and uuid not in known_uuids:
-                known_uuids.add(uuid)
-                new_entities.append(EarnAppSingleDeviceSensor(coordinator, entry, uuid))
+            dev_id = _dev_id(device)
+            if dev_id and dev_id not in known_ids:
+                known_ids.add(dev_id)
+                new_entities.append(EarnAppSingleDeviceSensor(coordinator, entry, dev_id))
+                new_entities.append(EarnAppDeviceDailyUsageSensor(coordinator, entry, dev_id))
         if new_entities:
             async_add_entities(new_entities)
 
@@ -139,6 +86,7 @@ class EarnAppBalanceSensor(EarnAppBaseSensor):
     _attr_name = "EarnApp Balance"
     _attr_icon = "mdi:currency-usd"
     _attr_native_unit_of_measurement = "$"
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def unique_id(self) -> str:
@@ -155,6 +103,7 @@ class EarnAppTotalEarnedSensor(EarnAppBaseSensor):
     _attr_name = "EarnApp Total Earned"
     _attr_icon = "mdi:cash-plus"
     _attr_native_unit_of_measurement = "$"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     @property
     def unique_id(self) -> str:
@@ -170,6 +119,7 @@ class EarnAppDevicesSensor(EarnAppBaseSensor):
 
     _attr_name = "EarnApp Active Devices"
     _attr_icon = "mdi:devices"
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def unique_id(self) -> str:
@@ -182,55 +132,87 @@ class EarnAppDevicesSensor(EarnAppBaseSensor):
     @property
     def extra_state_attributes(self):
         return {
+            "statuses": self.coordinator.data.get("statuses", {}),
             "devices": [
                 {
-                    "uuid": d.get("uuid"),
-                    "title": d.get("title"),
+                    "uuid": _dev_id(d),
+                    "title": _dev_title(d, _dev_id(d) or ""),
                     "type": d.get("device_type"),
                     "bw": d.get("bw"),
                     "earned": d.get("earned"),
                 }
                 for d in self.coordinator.data.get("devices", [])
-            ]
+            ],
         }
 
 
-class EarnAppSingleDeviceSensor(EarnAppBaseSensor):
-    """Individual EarnApp device sensor."""
+class EarnAppTotalDailyUsageSensor(EarnAppBaseSensor):
+    """Combined daily bandwidth usage across all devices (MB)."""
 
-    _attr_icon = "mdi:desktop-tower"
-    _attr_native_unit_of_measurement = "$"
-
-    def __init__(
-        self, coordinator: DataUpdateCoordinator, entry: ConfigEntry, uuid: str
-    ) -> None:
-        super().__init__(coordinator, entry)
-        self._uuid = uuid
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry_id}_{self._uuid}")},
-            name=self.name,
-            manufacturer="EarnApp",
-            model=self._get_device_data().get("device_type"),
-        )
-
-    def _get_device_data(self) -> dict:
-        for d in self.coordinator.data.get("devices", []):
-            if d.get("uuid") == self._uuid:
-                return d
-        return {}
+    _attr_name = "EarnApp Daily Usage Total"
+    _attr_icon = "mdi:cloud-download"
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = UnitOfInformation.MEGABYTES
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     @property
     def unique_id(self) -> str:
-        return f"{self._entry_id}_device_{self._uuid}"
+        return f"{self._entry_id}_daily_usage_total"
+
+    @property
+    def native_value(self) -> float:
+        today = _today_str()
+        total_bytes = 0
+        for dev_usage in self.coordinator.data.get("usage", {}).values():
+            if isinstance(dev_usage, dict):
+                total_bytes += dev_usage.get(today, 0)
+        return round(total_bytes / (1024 * 1024), 2)
+
+
+class EarnAppDeviceBase(EarnAppBaseSensor):
+    """Base class for individual EarnApp device sensors."""
+
+    def __init__(
+        self, coordinator: DataUpdateCoordinator, entry: ConfigEntry, dev_id: str
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._dev_id = dev_id
+
+    def _get_device_data(self) -> dict:
+        for d in self.coordinator.data.get("devices", []):
+            if _dev_id(d) == self._dev_id:
+                return d
+        return {}
+
+    def _device_name(self) -> str:
+        return _dev_title(self._get_device_data(), self._dev_id)
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        device = self._get_device_data()
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_{self._dev_id}")},
+            name=f"EarnApp {self._device_name()}",
+            manufacturer="EarnApp",
+            model=device.get("device_type"),
+            via_device=(DOMAIN, self._entry_id),
+        )
+
+
+class EarnAppSingleDeviceSensor(EarnAppDeviceBase):
+    """Individual EarnApp device earnings sensor."""
+
+    _attr_icon = "mdi:desktop-tower"
+    _attr_native_unit_of_measurement = "$"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_device_{self._dev_id}"
 
     @property
     def name(self) -> str:
-        device = self._get_device_data()
-        title = device.get("title") or self._uuid[:8]
-        return f"EarnApp {title}"
+        return f"EarnApp {self._device_name()}"
 
     @property
     def native_value(self):
@@ -240,12 +222,43 @@ class EarnAppSingleDeviceSensor(EarnAppBaseSensor):
     def extra_state_attributes(self):
         device = self._get_device_data()
         return {
-            "uuid": self._uuid,
-            "title": device.get("title"),
+            "uuid": self._dev_id,
+            "title": self._device_name(),
             "device_type": device.get("device_type"),
             "bandwidth_bytes": device.get("bw"),
             "total_earned": device.get("earned_total"),
             "rate": device.get("rate"),
             "ip": device.get("ip"),
             "country": device.get("country"),
+        }
+
+
+class EarnAppDeviceDailyUsageSensor(EarnAppDeviceBase):
+    """Daily bandwidth usage sensor (MB) for an individual EarnApp device."""
+
+    _attr_icon = "mdi:swap-vertical"
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = UnitOfInformation.MEGABYTES
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_device_{self._dev_id}_daily_usage"
+
+    @property
+    def name(self) -> str:
+        return f"EarnApp {self._device_name()} Daily Usage"
+
+    @property
+    def native_value(self) -> float:
+        today = _today_str()
+        dev_usage = self.coordinator.data.get("usage", {}).get(self._dev_id, {})
+        bytes_today = dev_usage.get(today, 0) if isinstance(dev_usage, dict) else 0
+        return round(bytes_today / (1024 * 1024), 2)
+
+    @property
+    def extra_state_attributes(self):
+        dev_usage = self.coordinator.data.get("usage", {}).get(self._dev_id, {})
+        return {
+            "history_bytes": dev_usage if isinstance(dev_usage, dict) else {},
         }
