@@ -1,27 +1,26 @@
 # EarnApp for Home Assistant
 
-> **Work in progress:** This custom integration is under active development and may change or be incomplete.
+Custom Home Assistant integration to monitor your EarnApp account balance, total earnings, and active devices.
 
-[![Add to HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=SnowyCrunchybar&repository=ha-earnapp&category=integration)
+> ⚠️ **Note before installing:**  
+> EarnApp does not provide a public API key or a simple username/password login for third-party tools. To use this integration, you must manually extract authentication cookies (`oauth-refresh-token` and `xsrf-token`) from your web browser's Developer Tools.  
+> **If you do not know what a browser network/storage inspector or a cookie is, this integration is not for you.**
 
-Home Assistant integration for monitoring EarnApp earnings and devices.
+---
 
 ## Features
 
-- Current balance
-- Total earned amount
-- Active device count and device details
+- **Current Balance ($)** – Tracks your available EarnApp balance.
+- **Total Earned ($)** – Tracks your all-time earnings.
+- **Active Devices** – Displays the total count of linked devices, with individual device details (UUID, title, device type, bandwidth, earnings) exposed as entity attributes.
+- **UI Configuration** – Easy setup via Home Assistant's UI (`Config Flow`), no YAML required.
 
-## Installation
+---
 
-### HACS
+## Installation (HACS)
 
-Use the **Add to HACS** button above, then install **EarnApp** from HACS.
-
-### Manual
-
-Copy the `custom_components/earnapp` directory into the `custom_components` directory of your Home Assistant configuration.
-
-## Configuration
-
-After installation, add the **EarnApp** integration from **Settings > Devices & services > Add integration**. You will need your EarnApp OAuth token.
+1. Open **HACS** in your Home Assistant instance.
+2. Go to **Integrations** → click the three dots in the top right corner → **Custom repositories**.
+3. Add the repository URL:
+   ```text
+   [https://github.com/SnowyCrunchybar/ha-earnapp](https://github.com/SnowyCrunchybar/ha-earnapp)
