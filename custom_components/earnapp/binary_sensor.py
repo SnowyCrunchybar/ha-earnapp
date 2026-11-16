@@ -91,7 +91,7 @@ class EarnAppDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
             return bool(
                 val.get("online")
                 or val.get("connected")
-                or val.get("status") == "online"
+                or val.get("status") in ("online", "connected", "active")
             )
         if isinstance(val, str):
             return val.lower() in ("online", "connected", "active", "1", "true")
