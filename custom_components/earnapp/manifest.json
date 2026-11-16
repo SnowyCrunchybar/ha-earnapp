@@ -6,5 +6,5 @@
   "documentation": "https://github.com/SnowyCrunchybar/ha-earnapp",
   "iot_class": "cloud_polling",
   "requirements": [],
-  "version": "1.2.1"
+  "version": "1.2.2"
 }
