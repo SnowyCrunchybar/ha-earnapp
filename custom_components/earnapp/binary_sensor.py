@@ -81,27 +81,20 @@ class EarnAppDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        statuses = self.coordinator.data.get("statuses", {})
+        statuses = self.coordinator.data.get("statuses")
         if not isinstance(statuses, dict) or self._dev_id not in statuses:
             return None
-        val = statuses[self._dev_id]
-        if isinstance(val, bool):
-            return val
-        if isinstance(val, dict):
-            return bool(
-                val.get("online")
-                or val.get("connected")
-                or val.get("status") in ("online", "connected", "active")
-            )
-        if isinstance(val, str):
-            return val.lower() in ("online", "connected", "active", "1", "true")
-        return bool(val)
+        return True
 
     @property
     def extra_state_attributes(self):
-        statuses = self.coordinator.data.get("statuses", {})
-        return {
-            "raw_status": statuses.get(self._dev_id)
-            if isinstance(statuses, dict)
-            else None,
-        }
+        statuses = self.coordinator.data.get("statuses")
+        if not isinstance(statuses, dict) or self._dev_id not in statuses:
+            return {}
+        val = statuses[self._dev_id]
+        if isinstance(val, list) and len(val) >= 2:
+            return {
+                "last_seen_ts": val[0],
+                "session_uptime_sec": val[1],
+            }
+        return {"raw_status": val}
