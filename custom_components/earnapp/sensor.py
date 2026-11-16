@@ -19,8 +19,13 @@ from .const import DOMAIN
 
 
 def _today_str() -> str:
-    """Return today's UTC date string matching EarnApp usage keys (YYYY-MM-DD)."""
+    """Return today's UTC date string (YYYY-MM-DD)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _month_str() -> str:
+    """Return current UTC month string (YYYY-MM)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
 def _dev_id(device: dict) -> str | None:
@@ -73,22 +78,33 @@ async def async_setup_entry(
         EarnAppTotalEarnedSensor(coordinator, entry),
         EarnAppDevicesSensor(coordinator, entry),
         EarnAppTotalDailyUsageSensor(coordinator, entry),
+        EarnAppTotalMonthlyUsageSensor(coordinator, entry),
+        EarnAppTotalCpuGpuEarningsSensor(coordinator, entry),
     ]
 
     known_ids: set[str] = set()
+    known_cg_ids: set[str] = set()
 
     async_add_entities(entities)
 
     def async_add_new_devices() -> None:
         new_entities: list[SensorEntity] = []
+        cg_devices = coordinator.data.get("cpu_gpu_devices", {})
+
         for device in coordinator.data.get("devices", []):
             dev_id = _dev_id(device)
             if dev_id and dev_id not in known_ids:
                 known_ids.add(dev_id)
                 new_entities.append(EarnAppSingleDeviceSensor(coordinator, entry, dev_id))
                 new_entities.append(EarnAppDeviceDailyUsageSensor(coordinator, entry, dev_id))
+                new_entities.append(EarnAppDeviceMonthlyUsageSensor(coordinator, entry, dev_id))
                 new_entities.append(EarnAppDevicePlatformSensor(coordinator, entry, dev_id))
                 new_entities.append(EarnAppDeviceIpSensor(coordinator, entry, dev_id))
+
+            if dev_id and dev_id in cg_devices and dev_id not in known_cg_ids:
+                known_cg_ids.add(dev_id)
+                new_entities.append(EarnAppDeviceCpuGpuSensor(coordinator, entry, dev_id))
+
         if new_entities:
             async_add_entities(new_entities)
 
@@ -161,23 +177,6 @@ class EarnAppDevicesSensor(EarnAppBaseSensor):
     def native_value(self):
         return len(self.coordinator.data.get("devices", []))
 
-    @property
-    def extra_state_attributes(self):
-        return {
-            "statuses": self.coordinator.data.get("statuses", {}),
-            "devices": [
-                {
-                    "uuid": _dev_id(d),
-                    "title": _dev_title(d, _dev_id(d) or ""),
-                    "platform": _dev_platform(d, _dev_id(d) or "")[0],
-                    "ip": _dev_ip(d),
-                    "bw": d.get("bw"),
-                    "earned": d.get("earned"),
-                }
-                for d in self.coordinator.data.get("devices", [])
-            ],
-        }
-
 
 class EarnAppTotalDailyUsageSensor(EarnAppBaseSensor):
     """Combined daily bandwidth usage across all devices (MB)."""
@@ -196,10 +195,59 @@ class EarnAppTotalDailyUsageSensor(EarnAppBaseSensor):
     def native_value(self) -> float:
         today = _today_str()
         total_bytes = 0
-        for dev_usage in self.coordinator.data.get("usage", {}).values():
+        for dev_usage in self.coordinator.data.get("usage_daily", {}).values():
             if isinstance(dev_usage, dict):
                 total_bytes += dev_usage.get(today, 0)
         return round(total_bytes / (1024 * 1024), 2)
+
+
+class EarnAppTotalMonthlyUsageSensor(EarnAppBaseSensor):
+    """Combined monthly bandwidth usage across all devices (MB)."""
+
+    _attr_name = "EarnApp Monthly Usage Total"
+    _attr_icon = "mdi:calendar-month"
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = UnitOfInformation.MEGABYTES
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_monthly_usage_total"
+
+    @property
+    def native_value(self) -> float:
+        month = _month_str()
+        total_bytes = 0
+        for dev_usage in self.coordinator.data.get("usage_monthly", {}).values():
+            if isinstance(dev_usage, dict):
+                # Kokeillaan YYYY-MM tai viimeisintä kuukausiavaimen arvoa
+                if month in dev_usage:
+                    total_bytes += dev_usage[month]
+                elif dev_usage:
+                    latest_key = sorted(dev_usage.keys())[-1]
+                    total_bytes += dev_usage.get(latest_key, 0)
+        return round(total_bytes / (1024 * 1024), 2)
+
+
+class EarnAppTotalCpuGpuEarningsSensor(EarnAppBaseSensor):
+    """Total earnings across all CPU/GPU devices."""
+
+    _attr_name = "EarnApp CPU/GPU Earnings"
+    _attr_icon = "mdi:expansion-card"
+    _attr_native_unit_of_measurement = "$"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_cpu_gpu_earnings_total"
+
+    @property
+    def native_value(self) -> float:
+        total = 0.0
+        for item in self.coordinator.data.get("cpu_gpu_devices", {}).values():
+            if isinstance(item, dict):
+                total += float(item.get("earnings") or 0)
+        return round(total, 4)
 
 
 class EarnAppDeviceBase(EarnAppBaseSensor):
@@ -293,15 +341,88 @@ class EarnAppDeviceDailyUsageSensor(EarnAppDeviceBase):
     @property
     def native_value(self) -> float:
         today = _today_str()
-        dev_usage = self.coordinator.data.get("usage", {}).get(self._dev_id, {})
+        dev_usage = self.coordinator.data.get("usage_daily", {}).get(self._dev_id, {})
         bytes_today = dev_usage.get(today, 0) if isinstance(dev_usage, dict) else 0
         return round(bytes_today / (1024 * 1024), 2)
 
     @property
     def extra_state_attributes(self):
-        dev_usage = self.coordinator.data.get("usage", {}).get(self._dev_id, {})
+        dev_usage = self.coordinator.data.get("usage_daily", {}).get(self._dev_id, {})
         return {
             "history_bytes": dev_usage if isinstance(dev_usage, dict) else {},
+        }
+
+
+class EarnAppDeviceMonthlyUsageSensor(EarnAppDeviceBase):
+    """Monthly bandwidth usage sensor (MB) for an individual EarnApp device."""
+
+    _attr_icon = "mdi:calendar-month"
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = UnitOfInformation.MEGABYTES
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_device_{self._dev_id}_monthly_usage"
+
+    @property
+    def name(self) -> str:
+        return f"EarnApp {self._device_name()} Monthly Usage"
+
+    @property
+    def native_value(self) -> float:
+        month = _month_str()
+        dev_usage = self.coordinator.data.get("usage_monthly", {}).get(self._dev_id, {})
+        bytes_month = 0
+        if isinstance(dev_usage, dict) and dev_usage:
+            if month in dev_usage:
+                bytes_month = dev_usage[month]
+            else:
+                latest_key = sorted(dev_usage.keys())[-1]
+                bytes_month = dev_usage.get(latest_key, 0)
+        return round(bytes_month / (1024 * 1024), 2)
+
+    @property
+    def extra_state_attributes(self):
+        dev_usage = self.coordinator.data.get("usage_monthly", {}).get(self._dev_id, {})
+        return {
+            "monthly_history_bytes": dev_usage if isinstance(dev_usage, dict) else {},
+        }
+
+
+class EarnAppDeviceCpuGpuSensor(EarnAppDeviceBase):
+    """CPU/GPU compute earnings sensor for an individual EarnApp device."""
+
+    _attr_icon = "mdi:expansion-card"
+    _attr_native_unit_of_measurement = "$"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_device_{self._dev_id}_cpu_gpu"
+
+    @property
+    def name(self) -> str:
+        return f"EarnApp {self._device_name()} CPU/GPU"
+
+    @property
+    def native_value(self):
+        cg_data = self.coordinator.data.get("cpu_gpu_devices", {}).get(self._dev_id, {})
+        return cg_data.get("earnings", 0)
+
+    @property
+    def extra_state_attributes(self):
+        cg_data = self.coordinator.data.get("cpu_gpu_devices", {}).get(self._dev_id, {})
+        cg_usage = self.coordinator.data.get("cpu_gpu_usage", {}).get(self._dev_id, {})
+        return {
+            "balance": cg_data.get("balance"),
+            "cpu_rate": cg_data.get("cpu_rate"),
+            "gpu_rate": cg_data.get("gpu_rate"),
+            "cpu_ms": cg_data.get("cpu_ms"),
+            "gpu_ms": cg_data.get("gpu_ms"),
+            "cpu_tasks": cg_data.get("cpu_tasks"),
+            "gpu_tasks": cg_data.get("gpu_tasks"),
+            "daily_usage_history": cg_usage if isinstance(cg_usage, dict) else {},
         }
 
 

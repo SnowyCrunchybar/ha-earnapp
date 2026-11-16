@@ -13,6 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "binary_sensor"]
 SCAN_INTERVAL = timedelta(minutes=15)
 
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up EarnApp from a config entry."""
     refresh_token = entry.data[CONF_REFRESH_TOKEN]
@@ -29,6 +30,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
             "x-xsrf-token": xsrf_token,
             "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
             "Referer": "https://earnapp.com/dashboard/",
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -37,6 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
         }
         try:
+            # 1. Saldo ja kokonaistienestit
             async with session.get(
                 "https://earnapp.com/dashboard/api/money?appid=earnapp",
                 headers=headers,
@@ -49,6 +52,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     raise UpdateFailed(f"Money API error: HTTP {money_resp.status}")
                 money_data = await money_resp.json()
 
+            # 2. Laitelistaus
             async with session.get(
                 "https://earnapp.com/dashboard/api/devices?appid=earnapp",
                 headers=headers,
@@ -63,7 +67,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if not isinstance(devices_data, list):
                     raise UpdateFailed("Devices API returned an invalid response")
 
-            usage_map = {}
+            # 3. Päivittäinen datankäyttö (usage daily)
+            usage_daily_map = {}
             async with session.get(
                 "https://earnapp.com/dashboard/api/usage?appid=earnapp&step=daily",
                 headers=headers,
@@ -74,8 +79,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         for item in usage_raw:
                             dev_id = item.get("_id") or item.get("uuid")
                             if dev_id:
-                                usage_map[dev_id] = item.get("data", {})
+                                usage_daily_map[dev_id] = item.get("data", {})
 
+            # 4. Kuukausittainen datankäyttö (usage monthly)
+            usage_monthly_map = {}
+            async with session.get(
+                "https://earnapp.com/dashboard/api/usage?appid=earnapp&step=monthly",
+                headers=headers,
+            ) as monthly_resp:
+                if monthly_resp.status == 200:
+                    monthly_raw = await monthly_resp.json()
+                    if isinstance(monthly_raw, list):
+                        for item in monthly_raw:
+                            dev_id = item.get("_id") or item.get("uuid")
+                            if dev_id:
+                                usage_monthly_map[dev_id] = item.get("data", {})
+
+            # 5. Laitteiden online-tilat (POST device_statuses)
             statuses_data = None
             device_payload = [
                 {"uuid": d.get("uuid") or d.get("_id")}
@@ -83,7 +103,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if d.get("uuid") or d.get("_id")
             ]
             async with session.post(
-                "https://earnapp.com/dashboard/api/device_statuses?appid=earnapp",
+                "https://earnapp.com/dashboard/api/device_statuses?appid=earnapp&version=1.689.642",
                 headers=headers,
                 json={"devices": device_payload},
             ) as status_resp:
@@ -91,12 +111,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     statuses_raw = await status_resp.json()
                     if isinstance(statuses_raw, dict):
                         statuses_data = statuses_raw
+                else:
+                    body = await status_resp.text()
+                    _LOGGER.warning(
+                        "device_statuses returned HTTP %s: %s",
+                        status_resp.status,
+                        body[:200],
+                    )
+
+            # 6. CPU/GPU-laitteet ja tienestit
+            cpu_gpu_map = {}
+            async with session.get(
+                "https://earnapp.com/dashboard/api/cpu_gpu_devices?appid=earnapp",
+                headers=headers,
+            ) as cg_dev_resp:
+                if cg_dev_resp.status == 200:
+                    cg_raw = await cg_dev_resp.json()
+                    if isinstance(cg_raw, list):
+                        for item in cg_raw:
+                            dev_id = item.get("uuid") or item.get("_id")
+                            if dev_id:
+                                cpu_gpu_map[dev_id] = item
+
+            # 7. CPU/GPU-päiväkäyttö
+            cpu_gpu_usage_map = {}
+            async with session.get(
+                "https://earnapp.com/dashboard/api/cpu_gpu_usage?appid=earnapp&step=daily",
+                headers=headers,
+            ) as cg_usage_resp:
+                if cg_usage_resp.status == 200:
+                    cgu_raw = await cg_usage_resp.json()
+                    if isinstance(cgu_raw, list):
+                        for item in cgu_raw:
+                            dev_id = item.get("_id") or item.get("uuid")
+                            if dev_id:
+                                cpu_gpu_usage_map[dev_id] = item.get("data", {})
 
             return {
                 "money": money_data,
                 "devices": devices_data,
-                "usage": usage_map,
+                "usage_daily": usage_daily_map,
+                "usage_monthly": usage_monthly_map,
                 "statuses": statuses_data,
+                "cpu_gpu_devices": cpu_gpu_map,
+                "cpu_gpu_usage": cpu_gpu_usage_map,
             }
         except UpdateFailed:
             raise
@@ -118,6 +176,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
