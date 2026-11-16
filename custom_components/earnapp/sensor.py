@@ -1,9 +1,11 @@
 import logging
 from datetime import timedelta
 
+from aiohttp import ClientError
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -50,6 +52,10 @@ async def async_setup_entry(
                 "https://earnapp.com/dashboard/api/money?appid=earnapp",
                 headers=headers,
             ) as money_resp:
+                if money_resp.status == 401:
+                    await hass.config_entries.async_start_reauth(
+                        entry, data=entry.data
+                    )
                 if money_resp.status != 200:
                     raise UpdateFailed(f"Money API error: HTTP {money_resp.status}")
                 money_data = await money_resp.json()
@@ -58,13 +64,23 @@ async def async_setup_entry(
                 "https://earnapp.com/dashboard/api/devices?appid=earnapp",
                 headers=headers,
             ) as dev_resp:
-                devices_data = await dev_resp.json() if dev_resp.status == 200 else []
+                if dev_resp.status == 401:
+                    await hass.config_entries.async_start_reauth(
+                        entry, data=entry.data
+                    )
+                if dev_resp.status != 200:
+                    raise UpdateFailed(f"Devices API error: HTTP {dev_resp.status}")
+                devices_data = await dev_resp.json()
+                if not isinstance(devices_data, list):
+                    raise UpdateFailed("Devices API returned an invalid response")
 
             return {
                 "money": money_data,
-                "devices": devices_data if isinstance(devices_data, list) else [],
+                "devices": devices_data,
             }
-        except Exception as err:
+        except UpdateFailed:
+            raise
+        except (ClientError, TypeError, ValueError) as err:
             raise UpdateFailed(f"Error communicating with EarnApp API: {err}") from err
 
     coordinator = DataUpdateCoordinator(
@@ -77,19 +93,28 @@ async def async_setup_entry(
 
     await coordinator.async_config_entry_first_refresh()
 
-    entities = [
+    entities: list[SensorEntity] = [
         EarnAppBalanceSensor(coordinator, entry),
         EarnAppTotalEarnedSensor(coordinator, entry),
         EarnAppDevicesSensor(coordinator, entry),
     ]
 
-    # Luodaan oma sensori jokaiselle laitteelle
-    for device in coordinator.data.get("devices", []):
-        uuid = device.get("uuid")
-        if uuid:
-            entities.append(EarnAppSingleDeviceSensor(coordinator, entry, uuid))
+    known_uuids: set[str] = set()
 
     async_add_entities(entities)
+
+    def async_add_new_devices() -> None:
+        new_entities = []
+        for device in coordinator.data.get("devices", []):
+            uuid = device.get("uuid")
+            if uuid and uuid not in known_uuids:
+                known_uuids.add(uuid)
+                new_entities.append(EarnAppSingleDeviceSensor(coordinator, entry, uuid))
+        if new_entities:
+            async_add_entities(new_entities)
+
+    async_add_new_devices()
+    coordinator.async_add_listener(async_add_new_devices)
 
 
 class EarnAppBaseSensor(CoordinatorEntity, SensorEntity):
@@ -98,6 +123,14 @@ class EarnAppBaseSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator: DataUpdateCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry_id = entry.entry_id
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="EarnApp",
+            manufacturer="EarnApp",
+        )
 
 
 class EarnAppBalanceSensor(EarnAppBaseSensor):
@@ -173,6 +206,15 @@ class EarnAppSingleDeviceSensor(EarnAppBaseSensor):
     ) -> None:
         super().__init__(coordinator, entry)
         self._uuid = uuid
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_{self._uuid}")},
+            name=self.name,
+            manufacturer="EarnApp",
+            model=self._get_device_data().get("device_type"),
+        )
 
     def _get_device_data(self) -> dict:
         for d in self.coordinator.data.get("devices", []):

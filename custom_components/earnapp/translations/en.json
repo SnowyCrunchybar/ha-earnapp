@@ -8,6 +8,14 @@
           "oauth_refresh_token": "OAuth Refresh Token (oauth-refresh-token)",
           "xsrf_token": "XSRF Token (xsrf-token)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect to EarnApp",
+        "description": "Your EarnApp session has expired. Enter fresh cookie values.",
+        "data": {
+          "oauth_refresh_token": "OAuth Refresh Token (oauth-refresh-token)",
+          "xsrf_token": "XSRF Token (xsrf-token)"
+        }
       }
     },
     "error": {

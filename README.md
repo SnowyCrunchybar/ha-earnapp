@@ -52,6 +52,7 @@ Click the button below to automatically open this repository in your Home Assist
 2. Press `F12` (or right-click anywhere on the page and select **Inspect**) to open Developer Tools.
 3. Open the cookie viewer:
    - **Chrome / Edge / Brave:** Go to the **Application** tab → expand **Cookies** on the left → click `https://earnapp.com`.
+   - **Safari:** Enable **Develop** in Safari Settings → **Advanced**, then open **Develop → Show Web Inspector**. Open the **Storage** tab → **Cookies** → click `https://earnapp.com`.
    - **Firefox:** Go to the **Storage** tab → expand **Cookies** on the left → click `https://earnapp.com`.
 4. Use the filter box to search for `token` and copy the **Value** column (not the Name) for these two rows:
    - `oauth-refresh-token`: A long string usually starting with `1%2F%2F...` (or `1//...`).
