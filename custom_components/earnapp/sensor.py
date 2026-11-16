@@ -6,11 +6,14 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfInformation
+from homeassistant.const import EntityCategory, UnitOfInformation
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
 
 from .const import DOMAIN
 
@@ -28,6 +31,25 @@ def _dev_id(device: dict) -> str | None:
 def _dev_title(device: dict, fallback_id: str) -> str:
     """Return human-readable device title supporting both title and name."""
     return device.get("title") or device.get("name") or fallback_id[:8]
+
+
+def _dev_platform(device: dict, dev_id: str) -> tuple[str, str]:
+    """Return (platform_label, mdi_icon) based on device_type or ID prefix."""
+    raw_type = (device.get("device_type") or "").lower()
+    prefix = dev_id.lower()
+
+    if "android" in raw_type or prefix.startswith("sdk-android"):
+        return ("Android (Phone)", "mdi:cellphone")
+    if "ios" in raw_type or "iphone" in raw_type or prefix.startswith("sdk-ios"):
+        return ("iOS (Phone/Tablet)", "mdi:cellphone")
+    if "win" in raw_type or prefix.startswith("sdk-win"):
+        return ("Windows (PC)", "mdi:microsoft-windows")
+    if "mac" in raw_type or prefix.startswith("sdk-mac"):
+        return ("macOS (PC)", "mdi:apple")
+    if "linux" in raw_type or prefix.startswith("sdk-linux"):
+        return ("Linux (PC/Server)", "mdi:linux")
+
+    return (device.get("device_type") or "Unknown", "mdi:desktop-tower")
 
 
 async def async_setup_entry(
@@ -57,6 +79,8 @@ async def async_setup_entry(
                 known_ids.add(dev_id)
                 new_entities.append(EarnAppSingleDeviceSensor(coordinator, entry, dev_id))
                 new_entities.append(EarnAppDeviceDailyUsageSensor(coordinator, entry, dev_id))
+                new_entities.append(EarnAppDevicePlatformSensor(coordinator, entry, dev_id))
+                new_entities.append(EarnAppDeviceIpSensor(coordinator, entry, dev_id))
         if new_entities:
             async_add_entities(new_entities)
 
@@ -137,7 +161,8 @@ class EarnAppDevicesSensor(EarnAppBaseSensor):
                 {
                     "uuid": _dev_id(d),
                     "title": _dev_title(d, _dev_id(d) or ""),
-                    "type": d.get("device_type"),
+                    "platform": _dev_platform(d, _dev_id(d) or "")[0],
+                    "ip": d.get("ip"),
                     "bw": d.get("bw"),
                     "earned": d.get("earned"),
                 }
@@ -190,11 +215,12 @@ class EarnAppDeviceBase(EarnAppBaseSensor):
     @property
     def device_info(self) -> DeviceInfo:
         device = self._get_device_data()
+        platform_label, _ = _dev_platform(device, self._dev_id)
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry_id}_{self._dev_id}")},
             name=f"EarnApp {self._device_name()}",
             manufacturer="EarnApp",
-            model=device.get("device_type"),
+            model=platform_label,
             via_device=(DOMAIN, self._entry_id),
         )
 
@@ -202,7 +228,6 @@ class EarnAppDeviceBase(EarnAppBaseSensor):
 class EarnAppSingleDeviceSensor(EarnAppDeviceBase):
     """Individual EarnApp device earnings sensor."""
 
-    _attr_icon = "mdi:desktop-tower"
     _attr_native_unit_of_measurement = "$"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -215,16 +240,22 @@ class EarnAppSingleDeviceSensor(EarnAppDeviceBase):
         return f"EarnApp {self._device_name()}"
 
     @property
+    def icon(self) -> str:
+        _, icon = _dev_platform(self._get_device_data(), self._dev_id)
+        return icon
+
+    @property
     def native_value(self):
         return self._get_device_data().get("earned")
 
     @property
     def extra_state_attributes(self):
         device = self._get_device_data()
+        platform_label, _ = _dev_platform(device, self._dev_id)
         return {
             "uuid": self._dev_id,
             "title": self._device_name(),
-            "device_type": device.get("device_type"),
+            "platform": platform_label,
             "bandwidth_bytes": device.get("bw"),
             "total_earned": device.get("earned_total"),
             "rate": device.get("rate"),
@@ -261,4 +292,54 @@ class EarnAppDeviceDailyUsageSensor(EarnAppDeviceBase):
         dev_usage = self.coordinator.data.get("usage", {}).get(self._dev_id, {})
         return {
             "history_bytes": dev_usage if isinstance(dev_usage, dict) else {},
+        }
+
+
+class EarnAppDevicePlatformSensor(EarnAppDeviceBase):
+    """Diagnostic sensor showing OS/device type (Windows, macOS, Linux, Android, iOS)."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_device_{self._dev_id}_platform"
+
+    @property
+    def name(self) -> str:
+        return f"EarnApp {self._device_name()} Platform"
+
+    @property
+    def icon(self) -> str:
+        _, icon = _dev_platform(self._get_device_data(), self._dev_id)
+        return icon
+
+    @property
+    def native_value(self) -> str:
+        platform_label, _ = _dev_platform(self._get_device_data(), self._dev_id)
+        return platform_label
+
+
+class EarnAppDeviceIpSensor(EarnAppDeviceBase):
+    """Diagnostic sensor showing the device's IP address."""
+
+    _attr_icon = "mdi:ip-network"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_device_{self._dev_id}_ip"
+
+    @property
+    def name(self) -> str:
+        return f"EarnApp {self._device_name()} IP"
+
+    @property
+    def native_value(self) -> str | None:
+        return self._get_device_data().get("ip")
+
+    @property
+    def extra_state_attributes(self):
+        device = self._get_device_data()
+        return {
+            "country": device.get("country"),
         }

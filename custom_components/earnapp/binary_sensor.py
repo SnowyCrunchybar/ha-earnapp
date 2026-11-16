@@ -6,10 +6,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
 
 from .const import DOMAIN
-from .sensor import _dev_id, _dev_title
+from .sensor import _dev_id, _dev_platform, _dev_title
 
 
 async def async_setup_entry(
@@ -59,11 +62,12 @@ class EarnAppDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def device_info(self) -> DeviceInfo:
         device = self._get_device_data()
+        platform_label, _ = _dev_platform(device, self._dev_id)
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry_id}_{self._dev_id}")},
             name=f"EarnApp {self._device_name()}",
             manufacturer="EarnApp",
-            model=device.get("device_type"),
+            model=platform_label,
             via_device=(DOMAIN, self._entry_id),
         )
 
