@@ -1,0 +1,18 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Yhdistä EarnApp-tiliin",
+        "description": "Näin etsit evästeavaimet:\n1. Avaa earnapp.com/dashboard selaimessa kirjautuneena.\n2. Paina F12 (Tarkasta) → avaa Application (Chrome/Edge) tai Storage (Firefox) → Cookies → https://earnapp.com.\n3. Kopioi 'oauth-refresh-token'-rivin arvo (alkaa 1%2F%2F...) sekä 'xsrf-token'-rivin arvo.\n4. ÄLÄ kirjaudu ulos kopioinnin jälkeen, vaan sulje vain välilehti.",
+        "data": {
+          "oauth_refresh_token": "OAuth Refresh Token (oauth-refresh-token)",
+          "xsrf_token": "XSRF Token (xsrf-token)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Yhteys EarnAppin palvelimelle epäonnistui.",
+      "invalid_auth": "Virheelliset evästeet tai vanhentunut istunto. Kopioi tuoreet arvot kirjautumatta ulos."
+    }
+  }
+}

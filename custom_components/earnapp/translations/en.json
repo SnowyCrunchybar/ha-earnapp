@@ -1,0 +1,18 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to EarnApp",
+        "description": "How to find your cookie keys:\n1. Open earnapp.com/dashboard in your browser and log in.\n2. Press F12 (Inspect) → go to Application (Chrome/Edge) or Storage (Firefox) → Cookies → https://earnapp.com.\n3. Copy the Value of 'oauth-refresh-token' (starts with 1%2F%2F...) and 'xsrf-token'.\n4. Do NOT log out after copying, just close the tab.",
+        "data": {
+          "oauth_refresh_token": "OAuth Refresh Token (oauth-refresh-token)",
+          "xsrf_token": "XSRF Token (xsrf-token)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to EarnApp servers.",
+      "invalid_auth": "Invalid cookies or expired session. Copy fresh tokens without logging out."
+    }
+  }
+}
