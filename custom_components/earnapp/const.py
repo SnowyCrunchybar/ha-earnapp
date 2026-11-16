@@ -1,2 +1,3 @@
 DOMAIN = "earnapp"
-CONF_OAUTH_TOKEN = "oauth_token"
+CONF_REFRESH_TOKEN = "oauth_refresh_token"
+CONF_XSRF_TOKEN = "xsrf_token"
