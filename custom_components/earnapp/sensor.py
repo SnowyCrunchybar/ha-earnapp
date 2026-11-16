@@ -62,7 +62,7 @@ async def async_setup_entry(
 
             return {
                 "money": money_data,
-                "devices": devices_data,
+                "devices": devices_data if isinstance(devices_data, list) else [],
             }
         except Exception as err:
             raise UpdateFailed(f"Error communicating with EarnApp API: {err}") from err
@@ -77,11 +77,19 @@ async def async_setup_entry(
 
     await coordinator.async_config_entry_first_refresh()
 
-    async_add_entities([
+    entities = [
         EarnAppBalanceSensor(coordinator, entry),
         EarnAppTotalEarnedSensor(coordinator, entry),
         EarnAppDevicesSensor(coordinator, entry),
-    ])
+    ]
+
+    # Luodaan oma sensori jokaiselle laitteelle
+    for device in coordinator.data.get("devices", []):
+        uuid = device.get("uuid")
+        if uuid:
+            entities.append(EarnAppSingleDeviceSensor(coordinator, entry, uuid))
+
+    async_add_entities(entities)
 
 
 class EarnAppBaseSensor(CoordinatorEntity, SensorEntity):
@@ -136,14 +144,10 @@ class EarnAppDevicesSensor(EarnAppBaseSensor):
 
     @property
     def native_value(self):
-        devs = self.coordinator.data.get("devices", [])
-        return len(devs) if isinstance(devs, list) else 0
+        return len(self.coordinator.data.get("devices", []))
 
     @property
     def extra_state_attributes(self):
-        devs = self.coordinator.data.get("devices", [])
-        if not isinstance(devs, list):
-            return {}
         return {
             "devices": [
                 {
@@ -153,6 +157,53 @@ class EarnAppDevicesSensor(EarnAppBaseSensor):
                     "bw": d.get("bw"),
                     "earned": d.get("earned"),
                 }
-                for d in devs
+                for d in self.coordinator.data.get("devices", [])
             ]
+        }
+
+
+class EarnAppSingleDeviceSensor(EarnAppBaseSensor):
+    """Individual EarnApp device sensor."""
+
+    _attr_icon = "mdi:desktop-tower"
+    _attr_native_unit_of_measurement = "$"
+
+    def __init__(
+        self, coordinator: DataUpdateCoordinator, entry: ConfigEntry, uuid: str
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._uuid = uuid
+
+    def _get_device_data(self) -> dict:
+        for d in self.coordinator.data.get("devices", []):
+            if d.get("uuid") == self._uuid:
+                return d
+        return {}
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_device_{self._uuid}"
+
+    @property
+    def name(self) -> str:
+        device = self._get_device_data()
+        title = device.get("title") or self._uuid[:8]
+        return f"EarnApp {title}"
+
+    @property
+    def native_value(self):
+        return self._get_device_data().get("earned")
+
+    @property
+    def extra_state_attributes(self):
+        device = self._get_device_data()
+        return {
+            "uuid": self._uuid,
+            "title": device.get("title"),
+            "device_type": device.get("device_type"),
+            "bandwidth_bytes": device.get("bw"),
+            "total_earned": device.get("earned_total"),
+            "rate": device.get("rate"),
+            "ip": device.get("ip"),
+            "country": device.get("country"),
         }
