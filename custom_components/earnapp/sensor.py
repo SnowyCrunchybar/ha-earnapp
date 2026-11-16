@@ -1,5 +1,6 @@
 import logging
 from datetime import timedelta
+
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -10,10 +11,12 @@ from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     UpdateFailed,
 )
-from .const import DOMAIN, CONF_OAUTH_TOKEN
+
+from .const import DOMAIN, CONF_REFRESH_TOKEN, CONF_XSRF_TOKEN
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(minutes=15)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -21,14 +24,26 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up EarnApp sensors based on a config entry."""
-    token = entry.data[CONF_OAUTH_TOKEN]
+    refresh_token = entry.data[CONF_REFRESH_TOKEN]
+    xsrf_token = entry.data[CONF_XSRF_TOKEN]
     session = async_get_clientsession(hass)
 
     async def async_update_data():
         """Fetch data from EarnApp API."""
         headers = {
-            "Cookie": f"auth-method=google; oauth-token={token}",
-            "Accept": "application/json",
+            "Cookie": (
+                f"auth-method=google; "
+                f"oauth-refresh-token={refresh_token}; "
+                f"xsrf-token={xsrf_token}"
+            ),
+            "x-xsrf-token": xsrf_token,
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://earnapp.com/dashboard/",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
         }
         try:
             async with session.get(
@@ -36,7 +51,7 @@ async def async_setup_entry(
                 headers=headers,
             ) as money_resp:
                 if money_resp.status != 200:
-                    raise UpdateFailed(f"Money API error: {money_resp.status}")
+                    raise UpdateFailed(f"Money API error: HTTP {money_resp.status}")
                 money_data = await money_resp.json()
 
             async with session.get(
